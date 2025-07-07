@@ -1,0 +1,22 @@
+{
+  "name": "gherkish",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.840.0",
+    "@aws-sdk/lib-dynamodb": "^3.840.0",
+    "change-case": "^5.4.4"
+  },
+  "peerDependencies": {
+    "pg": "^8.15.6"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.1"
+  }
+}
