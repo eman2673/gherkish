@@ -51,16 +51,36 @@ Feature('User Management', ({ beforeEach, afterEach, DB }) => {
 
 ## Installation
 
-Gherkish is designed to work within the monorepo structure. It's already included as a dependency in the workspace.
+```bash
+npm install gherkish
+# or
+yarn add gherkish
+# or
+pnpm add gherkish
+```
+
+### Development Installation
+
+For development or if you want to use the latest version:
+
+```bash
+git clone https://github.com/eman2673/gherkish.git
+cd gherkish
+pnpm install
+```
 
 ### Dependencies
 
 - **Core**: Built on Vitest for testing (supports both Chai and Jest assertions)
 - **HTTP**: Native fetch API
 - **Database**:
-  - PostgreSQL: `pg` package
+  - PostgreSQL: `pg` package (peer dependency)
   - DynamoDB: `@aws-sdk/client-dynamodb` and `@aws-sdk/lib-dynamodb`
 - **Utilities**: `change-case` for case conversion
+
+### Repository
+
+This package is available as a standalone repository at: https://github.com/eman2673/gherkish.git
 
 ## Basic Usage
 
