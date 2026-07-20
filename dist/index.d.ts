@@ -459,7 +459,14 @@ type Context$1 = {
 };
 
 type Tail<T extends any[]> = T extends [any, ...infer U] ? U : never;
-type PlusUtils<T extends (...args: any[]) => void> = (...args: [Parameters<T>[0], EachUtils, ...Tail<Parameters<T>>]) => void;
+/**
+ * Preserves T's real return type instead of forcing `void`. Vitest's
+ * before/afterEach listeners return `Awaitable<unknown>`, so hardcoding `void`
+ * here made async Given/afterEach callbacks trip
+ * @typescript-eslint/no-misused-promises for consumers, even though they
+ * resolve correctly at runtime.
+ */
+type PlusUtils<T extends (...args: any[]) => any> = (...args: [Parameters<T>[0], EachUtils, ...Tail<Parameters<T>>]) => ReturnType<T>;
 declare const contextualBeforeEach: (args_0: PlusUtils<_vitest_runner.BeforeEachListener<Context$1>>, timeout?: number | undefined) => void;
 declare const contextualAfterEach: (args_0: PlusUtils<_vitest_runner.AfterEachListener<Context$1>>, timeout?: number | undefined) => void;
 type FeatureUtils = {

@@ -34,7 +34,9 @@ var params = {
   afterAll,
   get DB() {
     if (!_dbUtils) {
-      throw new Error("Database utilities not initialized. Make sure setup.ts has run.");
+      throw new Error(
+        "Database utilities not initialized. Make sure setup.ts has run."
+      );
     }
     return _dbUtils;
   },
@@ -61,4 +63,4 @@ export {
   registerFeatureUtils,
   feature
 };
-//# sourceMappingURL=chunk-KJCU2WBQ.js.map
+//# sourceMappingURL=chunk-EBYPHWYD.js.map
