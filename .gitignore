@@ -6,7 +6,11 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Build outputs
-dist/
+# dist/ is intentionally committed: consumers install this package via a git
+# dependency (not the npm registry), and relying on the "prepare" script to
+# rebuild it on install has proven unreliable across package managers/repos.
+# Committing the built output means installs never depend on that script
+# succeeding. Run `pnpm build` and commit the result after changing src/.
 build/
 *.tsbuildinfo
 
