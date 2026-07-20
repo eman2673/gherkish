@@ -3,8 +3,20 @@
   "version": "0.0.2",
   "private": false,
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "tsup",
+    "prepare": "tsup",
     "test": "vitest run",
     "lint": "eslint . --ext .ts"
   },
@@ -21,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^22.15.17",
     "@types/pg": "^8.15.1",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }

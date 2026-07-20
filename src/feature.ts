@@ -72,18 +72,29 @@ export function registerFeatureUtils(util: Partial<FeatureUtils>) {
   Object.assign(params, util);
 }
 
+// Explicit public-facing type: describe.todo's real type reaches into
+// @vitest/runner's private internals (SuiteCollectorCallable, etc.), which
+// can't be named in a bundled .d.ts. Annotating FeatureFn keeps the emitted
+// declaration self-contained while runtime behavior is unchanged.
+type FeatureFn = {
+  (name: string, fn: (params: FeatureUtils) => void): void;
+  only: (name: string, fn: (params: FeatureUtils) => void) => void;
+  skip: (name: string, fn: (params: FeatureUtils) => void) => void;
+  todo: (name: string) => void;
+};
+
 // Create the feature function
-function feature(name: string, fn: (params: FeatureUtils) => void) {
-  describe(name, () => fn(params));
-}
-
-// Add the special methods
-feature.only = (name: string, fn: (params: FeatureUtils) => void) =>
-  describe.only(name, () => fn(params));
-
-feature.skip = (name: string, fn: (params: FeatureUtils) => void) =>
-  describe.skip(name, () => fn(params));
-
-feature.todo = describe.todo;
+const feature: FeatureFn = Object.assign(
+  function feature(name: string, fn: (params: FeatureUtils) => void) {
+    describe(name, () => fn(params));
+  },
+  {
+    only: (name: string, fn: (params: FeatureUtils) => void) =>
+      describe.only(name, () => fn(params)),
+    skip: (name: string, fn: (params: FeatureUtils) => void) =>
+      describe.skip(name, () => fn(params)),
+    todo: describe.todo,
+  },
+);
 
 export { feature };
