@@ -1,4 +1,4 @@
-import './db.client';
+import registerDbClient from './db.client';
 import { Client, ClientConfig } from 'pg';
 import { SqlClient } from './sql.client';
 import type { DBNameSpace } from '../../types/global';
@@ -45,5 +45,6 @@ export class PgClient extends SqlClient {
 }
 
 export default (context: DBNameSpace) => {
+  registerDbClient(context);
   context.PgClient = PgClient;
 };

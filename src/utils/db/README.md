@@ -54,7 +54,7 @@ const dynamoClient = new DynamoClient(
       secretAccessKey: 'your-secret-key',
     },
   },
-  'users-table'
+  'users-table',
 );
 
 // Insert a record
@@ -98,7 +98,7 @@ registry.registerDb('dynamo', {
       {
         region: 'us-east-1',
       },
-      'users-table'
+      'users-table',
     );
   },
 });
@@ -117,6 +117,51 @@ const result = await registry.sendRequest('postgres', 'users', 'insert', {
 4. **Connection Management**: `DbClientRegistry` manages multiple database connections
 5. **Default Values**: Support for setting default values for tables
 6. **Context Integration**: Integrates with the global context system
+7. **Assertion Utilities**: Built-in `DB.expect` for fluent assertions on database state
+
+### Using DB.expect
+
+```typescript
+// Single result matching
+await DB.expect('default', 'users', { email }).toHaveLength(1);
+// When single result, db.responseObject contains the object directly
+expect(db.responseObject).toMatchObject({
+  email: 'test@example.com',
+  status: 'active',
+});
+
+// Multiple results matching
+await DB.expect('default', 'orders', { userId }).toHaveLength(2);
+// When multiple results, db.responseObject is an array
+expect(db.responseObject).toEqual([
+  expect.objectContaining({ status: 'completed' }),
+  expect.objectContaining({ status: 'pending' }),
+]);
+
+// Historical operations remain available in context
+Given(async (_, { DB }) => {
+  // Insert some records
+  await DB.insert(
+    'default',
+    'users',
+    { name: 'Alice', role: 'admin' },
+    { name: 'Bob', role: 'user' },
+  );
+  // Access via db.[TableName].writes
+  expect(db.Users?.writes[0]).toEqual([
+    expect.objectContaining({ name: 'Alice' }),
+    expect.objectContaining({ name: 'Bob' }),
+  ]);
+
+  // Query the records
+  await DB.expect('default', 'users', { role: 'admin' }).toHaveLength(1);
+  // Access via db.[TableName].reads
+  expect(db.Users?.reads[0]).toEqual(expect.objectContaining({ name: 'Alice' }));
+});
+
+// Chai-style assertions
+await DB.expect('default', 'products', { category: 'books' }).to.have.length.greaterThan(5);
+```
 
 ## Extending the System
 

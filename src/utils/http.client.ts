@@ -1,7 +1,11 @@
-import { registerStepUtils } from '../step-types';
-import { useCtx } from './context';
+// Test-harness client: console diagnostics are intentional and empty
+// catches deliberately swallow parse/context errors that aren't actionable.
+/* eslint-disable no-console, no-empty */
 import * as PATH from 'path';
+
+import { registerStepUtils } from '../step-types';
 import type { HttpNameSpace } from '../types/global';
+import { useCtx } from './context';
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -49,7 +53,7 @@ export interface ApiRegistry {
 export type SendRequestHandler = (
   apiName: string,
   path: string,
-  requestInit?: PartialRequestInit
+  requestInit?: PartialRequestInit,
 ) => Promise<HttpResponse>;
 export type SendRequestUtil = SendRequestHandler & {
   [key in Lowercase<HttpMethod>]: SendRequestHandler;
@@ -82,7 +86,7 @@ export class HttpClient {
     apiName: string,
     path: string,
     method: HttpMethod = 'GET',
-    requestInit: PartialRequestInit = {}
+    requestInit: PartialRequestInit = {},
   ): Promise<HttpResponse<T>> {
     const api = this.apiRegistry.get(apiName);
     if (!api) {
@@ -104,22 +108,23 @@ export class HttpClient {
     // Add params to URL if present
     if (params) {
       const searchParams = new URLSearchParams(
-        Object.entries(params).map(([key, value]) => [key, String(value)])
+        Object.entries(params).map(([key, value]) => [key, String(value)]),
       );
       url += `?${searchParams.toString()}`;
     }
 
     let body: BodyInit | undefined;
+    let isFormData = false;
 
     if (form) {
       const formData = new FormData();
       Object.entries(form).forEach(([key, value]) => {
         if (value && typeof value === 'object' && 'formDataValue' in value) {
-          const { formDataValue, ...options } = value as any;
+          const { formDataValue, filename, ...options } = value;
           if (typeof formDataValue === 'string') {
             formData.append(key, formDataValue);
           } else if (formDataValue instanceof Blob) {
-            formData.append(key, formDataValue, options);
+            formData.append(key, formDataValue, filename || options.filename);
           }
         } else if (typeof value === 'string') {
           formData.append(key, value);
@@ -129,6 +134,7 @@ export class HttpClient {
       });
 
       body = formData;
+      isFormData = true;
     } else if (data !== undefined) {
       body = JSON.stringify(data);
       requestHeaders['Content-Type'] = 'application/json';
@@ -137,15 +143,17 @@ export class HttpClient {
     const headers = Object.entries(
       Object.assign({}, api.defaultHeaders, requestHeaders, {
         [MUTE_SENTRY_HEADER]: muteSentry ? 'true' : undefined,
-      })
-    ).reduce((acc: [string, string][], [key, value]) => {
-      if (Array.isArray(value)) {
-        value.forEach(v => acc.push([key, v]));
-      } else if (value !== undefined) {
-        acc.push([key, value]);
-      }
-      return acc;
-    }, []);
+      }),
+    )
+      .reduce((acc: [string, string][], [key, value]) => {
+        if (Array.isArray(value)) {
+          value.forEach((v) => acc.push([key, v]));
+        } else if (value !== undefined) {
+          acc.push([key, value]);
+        }
+        return acc;
+      }, [])
+      .filter(([key]) => !isFormData || key.toLowerCase() !== 'content-type');
 
     let config: HttpRequestConfig = {
       url,
@@ -185,6 +193,8 @@ export class HttpClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+    console.log('HTTP request: ', url, JSON.stringify(requestOptions, null, 2));
+
     try {
       const response = await fetch(url, {
         ...requestOptions,
@@ -200,14 +210,24 @@ export class HttpClient {
       });
 
       // Parse response body
-      let responseData: T;
+      let responseData: any;
       const contentType = response.headers.get('content-type');
 
       if (contentType?.includes('application/json')) {
-        responseData = await response.json();
+        try {
+          responseData = await response.json();
+        } catch {}
       } else {
-        responseData = (await response.text()) as T;
+        responseData = await response.text();
+        // Try to parse as JSON if it looks like JSON
+        if (responseData.startsWith('{') || responseData.startsWith('[')) {
+          try {
+            responseData = JSON.parse(responseData);
+          } catch {}
+        }
       }
+
+      console.log('HTTP response: ', url, response.status, JSON.stringify(responseData, null, 2));
 
       return {
         data: responseData,
@@ -250,17 +270,20 @@ function createHttpUtil(): SendRequestUtil {
   return Object.assign(handler, {
     client: httpClient,
     ...(Object.fromEntries(
-      HTTP_METHODS.map(method => [
+      HTTP_METHODS.map((method) => [
         method.toLowerCase(),
         (apiName: string, path: string, requestInit?: PartialRequestInit) =>
           httpClient.sendRequest(apiName, path, method, requestInit),
-      ])
+      ]),
     ) as Record<Lowercase<HttpMethod>, SendRequestHandler>),
   });
 }
 
+// Module-level singleton so other utilities (e.g. Webhooks) can layer on top
+// of the same HttpClient — sharing its API registry, hooks, and context updates.
+export const httpUtil: SendRequestUtil = createHttpUtil();
+
 export default (context: HttpNameSpace) => {
-  const util = createHttpUtil();
-  registerStepUtils({ when: { HTTP: util } });
-  context.add = util.client.add.bind(util.client);
+  registerStepUtils({ when: { HTTP: httpUtil } });
+  context.add = httpUtil.client.add.bind(httpUtil.client);
 };

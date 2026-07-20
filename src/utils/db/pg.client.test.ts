@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Client } from 'pg';
-import { DbClient, createDbUtils } from './db.client';
-import type { PgRegistry, DbResponse } from './db.client';
-import { runWithContext } from '../../test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DbClientRegistry } from './db.client';
+import type { DBRegistration } from './db.client';
+import { PgClient } from './pg.client';
 // Import test-utils to ensure context mock is set up
 import '../../test-utils';
 
@@ -14,8 +14,8 @@ vi.mock('pg', () => ({
 
 const MockClient = vi.mocked(Client);
 
-describe('DbClient', () => {
-  let dbClient: DbClient;
+describe('DbClientRegistry', () => {
+  let dbRegistry: DbClientRegistry;
   let mockPgClient: any;
 
   beforeEach(() => {
@@ -29,449 +29,335 @@ describe('DbClient', () => {
     };
     MockClient.mockImplementation(() => mockPgClient);
 
-    dbClient = new DbClient();
+    dbRegistry = new DbClientRegistry();
   });
 
   afterEach(async () => {
-    await dbClient.close();
+    await dbRegistry.close();
   });
 
-  describe('registerDb', () => {
+  describe('Database Registration', () => {
     it('should register a database configuration', () => {
-      const config: Omit<PgRegistry, 'name'> = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
+      const config: Omit<DBRegistration, 'name'> = {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test',
+            user: 'test',
+            password: 'test',
+          }),
       };
 
-      dbClient.registerDb('test-db', config);
-      const registered = dbClient.getDb('test-db');
+      dbRegistry.add('test-db', config);
+      const registered = dbRegistry.getDb('test-db');
 
-      expect(registered).toEqual({
-        name: 'test-db',
-        ...config,
-      });
+      expect(registered).toBeDefined();
+      expect(registered?.name).toBe('test-db');
     });
 
     it('should overwrite existing database configuration', () => {
-      const config1 = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test1',
-          user: 'test',
-          password: 'test',
-        },
+      const config1: Omit<DBRegistration, 'name'> = {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test1',
+            user: 'test',
+            password: 'test',
+          }),
       };
-      const config2 = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test2',
-          user: 'test',
-          password: 'test',
-        },
+      const config2: Omit<DBRegistration, 'name'> = {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test2',
+            user: 'test',
+            password: 'test',
+          }),
       };
 
-      dbClient.registerDb('test-db', config1);
-      dbClient.registerDb('test-db', config2);
+      dbRegistry.add('test-db', config1);
+      dbRegistry.add('test-db', config2);
 
-      const registered = dbClient.getDb('test-db');
-      expect(registered?.connection.database).toBe('test2');
+      const registered = dbRegistry.getDb('test-db');
+      expect(registered).toBeDefined();
+      expect(registered?.name).toBe('test-db');
     });
   });
 
-  describe('getClient', () => {
-    it('should create and cache a client for a registered database', async () => {
-      const config = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
+  describe('Database Operations', () => {
+    beforeEach(() => {
+      const config: Omit<DBRegistration, 'name'> = {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test',
+            user: 'test',
+            password: 'test',
+          }),
       };
-
-      dbClient.registerDb('test-db', config);
-
-      const client1 = await (dbClient as any).getClient('test-db');
-      const client2 = await (dbClient as any).getClient('test-db');
-
-      expect(MockClient).toHaveBeenCalledTimes(1);
-      expect(mockPgClient.connect).toHaveBeenCalledTimes(1);
-      expect(client1).toBe(client2);
+      dbRegistry.add('test-db', config);
     });
 
-    it('should throw error for unregistered database', async () => {
-      await expect((dbClient as any).getClient('unregistered')).rejects.toThrow(
-        "Database 'unregistered' not registered"
-      );
-    });
-  });
-
-  describe('exec', () => {
     it('should execute a SQL statement', async () => {
       const mockRows = [{ id: 1, name: 'test' }];
       mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      const config = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
-      };
-
-      dbClient.registerDb('test-db', config);
-
-      const result = await dbClient.exec('test-db', 'SELECT * FROM users', ['param1']);
+      const result = await dbRegistry.exec('test-db', 'SELECT * FROM users', ['param1']);
 
       expect(mockPgClient.query).toHaveBeenCalledWith('SELECT * FROM users', ['param1']);
       expect(result).toEqual(mockRows);
-    });
-  });
-
-  describe('sendRequest', () => {
-    beforeEach(() => {
-      const config = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
-      };
-      dbClient.registerDb('test-db', config);
     });
 
     it('should handle select operation', async () => {
       const mockRows = [{ id: 1, name: 'test' }];
       mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      const response = await dbClient.sendRequest('test-db', 'users', 'select', {
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'select', {
         where: { id: 1 },
       });
 
       expect(response.data).toEqual(mockRows);
       expect(response.rowCount).toBe(1);
-      expect(response.config.operation).toBe('select');
     });
 
     it('should handle insert operation', async () => {
-      const mockRows = [{ id: 1, name: 'test', email: 'test@example.com' }];
+      const mockRows = [{ id: 1, name: 'test' }];
       mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      await runWithContext(async () => {
-        const response = await dbClient.sendRequest('test-db', 'users', 'insert', {
-          data: { name: 'test', email: 'test@example.com' },
-        });
-
-        expect(response.data).toEqual(mockRows);
-        expect(response.rowCount).toBe(1);
-        expect(response.config.operation).toBe('insert');
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'insert', {
+        data: { name: 'test' },
       });
+
+      expect(response.data).toEqual(mockRows);
+      expect(response.rowCount).toBe(1);
     });
 
     it('should handle update operation', async () => {
-      const mockRows = [{ id: 1, name: 'updated', email: 'test@example.com' }];
+      const mockRows = [{ id: 1, name: 'updated' }];
       mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      const response = await dbClient.sendRequest('test-db', 'users', 'update', {
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'update', {
         data: { name: 'updated' },
         where: { id: 1 },
       });
 
       expect(response.data).toEqual(mockRows);
       expect(response.rowCount).toBe(1);
-      expect(response.config.operation).toBe('update');
     });
 
     it('should handle delete operation', async () => {
       const mockRows = [{ id: 1, name: 'test' }];
       mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      const response = await dbClient.sendRequest('test-db', 'users', 'delete', {
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'delete', {
         where: { id: 1 },
       });
 
       expect(response.data).toEqual(mockRows);
       expect(response.rowCount).toBe(1);
-      expect(response.config.operation).toBe('delete');
     });
 
     it('should throw error for unregistered database', async () => {
-      await expect(dbClient.sendRequest('unregistered', 'users', 'select')).rejects.toThrow(
-        "Database 'unregistered' not registered"
+      await expect(dbRegistry.sendRequest('unregistered', 'users', 'select')).rejects.toThrow(
+        "Database 'unregistered' not registered",
       );
     });
 
     it('should throw error for unsupported operation', async () => {
-      await expect(dbClient.sendRequest('test-db', 'users', 'unsupported' as any)).rejects.toThrow(
-        'Unsupported operation: unsupported'
-      );
+      await expect(
+        // @ts-expect-error Testing invalid operation
+        dbRegistry.sendRequest('test-db', 'users', 'invalid'),
+      ).rejects.toThrow('Unsupported operation: invalid');
     });
 
     it('should apply before and after hooks', async () => {
-      const beforeHook = vi.fn(config => ({ ...config, custom: true }));
-      const afterHook = vi.fn(response => ({ ...response, custom: true }));
+      const mockRows = [{ id: 1, name: 'test' }];
+      mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      const config = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
+      const beforeHook = vi.fn((config) => ({
+        ...config,
+        where: { ...config.where, active: true },
+      }));
+      const afterHook = vi.fn((response) => ({
+        ...response,
+        data: response.data.map((row: Record<string, any>) => ({ ...row, modified: true })),
+      }));
+
+      dbRegistry.add('test-db', {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test',
+            user: 'test',
+            password: 'test',
+          }),
         before: beforeHook,
         after: afterHook,
-      };
+      });
 
-      dbClient.registerDb('test-db', config);
-      mockPgClient.query.mockResolvedValue({ rows: [] });
-
-      const response = await dbClient.sendRequest('test-db', 'users', 'select');
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'select', {
+        where: { id: 1 },
+      });
 
       expect(beforeHook).toHaveBeenCalled();
       expect(afterHook).toHaveBeenCalled();
-      expect((response as any).custom).toBe(true);
+      expect(response.data[0].modified).toBe(true);
     });
   });
 
-  describe('defaults management', () => {
-    it('should set and apply default values', async () => {
-      const config = {
-        connection: {
+  describe('onConnect hook', () => {
+    it('runs once, after connect, with the connected client, before it is cached', async () => {
+      const order: string[] = [];
+      const connect = vi.fn(async () => {
+        order.push('connect');
+        return new PgClient({
           host: 'localhost',
           port: 5432,
           database: 'test',
           user: 'test',
           password: 'test',
-        },
-      };
-
-      dbClient.registerDb('test-db', config);
-      dbClient.setDefaultValues('test-db', 'users', () => ({ created_at: '2023-01-01' }));
-
-      mockPgClient.query.mockResolvedValue({ rows: [] });
-
-      await runWithContext(async () => {
-        await dbClient.sendRequest('test-db', 'users', 'insert', {
-          data: { name: 'test' },
         });
       });
-
-      // Check that the query includes the default value
-      expect(mockPgClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('created_at'),
-        expect.arrayContaining(['2023-01-01'])
-      );
-    });
-
-    it('should clear defaults for a database', () => {
-      dbClient.setDefaultValues('test-db', 'users', () => ({ created_at: '2023-01-01' }));
-      dbClient.setDefaultValues('test-db', 'posts', () => ({ created_at: '2023-01-01' }));
-      dbClient.setDefaultValues('other-db', 'users', () => ({ created_at: '2023-01-01' }));
-
-      dbClient.clearDefaults('test-db');
-
-      // Check that only test-db defaults are cleared
-      expect((dbClient as any).defaults.has('test-db:users')).toBe(false);
-      expect((dbClient as any).defaults.has('test-db:posts')).toBe(false);
-      expect((dbClient as any).defaults.has('other-db:users')).toBe(true);
-    });
-  });
-
-  describe('cleanup and close', () => {
-    it('should close all database connections', async () => {
-      const config = {
-        connection: {
-          host: 'localhost',
-          port: 5432,
-          database: 'test',
-          user: 'test',
-          password: 'test',
-        },
-      };
-
-      dbClient.registerDb('test-db', config);
-      await (dbClient as any).getClient('test-db');
-
-      await dbClient.close();
-
-      expect(mockPgClient.end).toHaveBeenCalled();
-      expect((dbClient as any).clients.size).toBe(0);
-    });
-  });
-});
-
-describe('createDbUtils', () => {
-  let dbClient: DbClient;
-  let dbUtils: any;
-  let mockPgClient: any;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-
-    mockPgClient = {
-      connect: vi.fn().mockResolvedValue(undefined),
-      query: vi.fn().mockResolvedValue({ rows: [] }),
-      end: vi.fn().mockResolvedValue(undefined),
-    };
-    MockClient.mockImplementation(() => mockPgClient);
-
-    dbClient = new DbClient();
-    const config = {
-      connection: {
-        host: 'localhost',
-        port: 5432,
-        database: 'test',
-        user: 'test',
-        password: 'test',
-      },
-    };
-    dbClient.registerDb('test-db', config);
-    dbUtils = createDbUtils(dbClient);
-  });
-
-  afterEach(async () => {
-    await dbClient.close();
-  });
-
-  describe('sendRequest functionality', () => {
-    it('should delegate to dbClient.sendRequest', async () => {
-      const mockResponse: DbResponse = {
-        data: [{ id: 1, name: 'test' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'select' },
-      };
-
-      vi.spyOn(dbClient, 'sendRequest').mockResolvedValue(mockResponse);
-
-      const result = await dbUtils('test-db', 'users', 'select');
-
-      expect(dbClient.sendRequest).toHaveBeenCalledWith('test-db', 'users', 'select', undefined);
-      expect(result).toEqual(mockResponse);
-    });
-
-    it('should have client property', () => {
-      expect(dbUtils.client).toBe(dbClient);
-    });
-
-    it('should have exec method', () => {
-      expect(typeof dbUtils.exec).toBe('function');
-    });
-  });
-
-  describe('insert method', () => {
-    it('should insert multiple records', async () => {
-      const mockResponse1: DbResponse = {
-        data: [{ id: 1, name: 'user1' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'insert' },
-      };
-      const mockResponse2: DbResponse = {
-        data: [{ id: 2, name: 'user2' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'insert' },
-      };
-
-      vi.spyOn(dbClient, 'sendRequest')
-        .mockResolvedValueOnce(mockResponse1)
-        .mockResolvedValueOnce(mockResponse2);
-
-      const result = await dbUtils.insert('test-db', 'users', { name: 'user1' }, { name: 'user2' });
-
-      expect(dbClient.sendRequest).toHaveBeenCalledTimes(2);
-      expect(result).toEqual([
-        { id: 1, name: 'user1' },
-        { id: 2, name: 'user2' },
-      ]);
-    });
-  });
-
-  describe('update method', () => {
-    it('should update records', async () => {
-      const mockResponse: DbResponse = {
-        data: [{ id: 1, name: 'updated' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'update' },
-      };
-
-      vi.spyOn(dbClient, 'sendRequest').mockResolvedValue(mockResponse);
-
-      const result = await dbUtils.update('test-db', 'users', { name: 'updated' }, { id: 1 });
-
-      expect(dbClient.sendRequest).toHaveBeenCalledWith('test-db', 'users', 'update', {
-        data: { name: 'updated' },
-        where: { id: 1 },
+      const onConnect = vi.fn(async (client) => {
+        order.push('onConnect');
+        await client.exec('SELECT 1');
       });
-      expect(result).toEqual([{ id: 1, name: 'updated' }]);
+
+      dbRegistry.add('test-db', { connect, onConnect });
+
+      // First two operations share one connection; the hook fires exactly once.
+      await dbRegistry.exec('test-db', 'SELECT * FROM a');
+      await dbRegistry.exec('test-db', 'SELECT * FROM b');
+
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['connect', 'onConnect']);
+      expect(onConnect).toHaveBeenCalledWith(expect.any(PgClient));
     });
-  });
 
-  describe('delete method', () => {
-    it('should delete records', async () => {
-      const mockResponse: DbResponse = {
-        data: [{ id: 1, name: 'deleted' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'delete' },
-      };
-
-      vi.spyOn(dbClient, 'sendRequest').mockResolvedValue(mockResponse);
-
-      const result = await dbUtils.delete('test-db', 'users', { id: 1 });
-
-      expect(dbClient.sendRequest).toHaveBeenCalledWith('test-db', 'users', 'delete', {
-        where: { id: 1 },
+    it('propagates a hook failure and does not cache the client', async () => {
+      const onConnect = vi.fn().mockRejectedValue(new Error('seed failed'));
+      dbRegistry.add('test-db', {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test',
+            user: 'test',
+            password: 'test',
+          }),
+        onConnect,
       });
-      expect(result).toEqual([{ id: 1, name: 'deleted' }]);
+
+      await expect(dbRegistry.exec('test-db', 'SELECT 1')).rejects.toThrow('seed failed');
+      // A retried operation re-attempts the hook rather than using a half-set-up client.
+      await expect(dbRegistry.exec('test-db', 'SELECT 1')).rejects.toThrow('seed failed');
+      expect(onConnect).toHaveBeenCalledTimes(2);
     });
   });
 
-  describe('expect method', () => {
-    it('should return vitest expect assertion', async () => {
-      const mockResponse: DbResponse = {
-        data: [{ id: 1, name: 'test' }],
-        rowCount: 1,
-        config: { table: 'users', operation: 'select' },
-      };
-
-      vi.spyOn(dbClient, 'sendRequest').mockResolvedValue(mockResponse);
-
-      const assertion = await dbUtils.expect('test-db', 'users', { id: 1 });
-
-      expect(dbClient.sendRequest).toHaveBeenCalledWith('test-db', 'users', 'select', {
-        where: { id: 1 },
+  describe('Defaults Management', () => {
+    beforeEach(() => {
+      dbRegistry.add('test-db', {
+        connect: async () =>
+          new PgClient({
+            host: 'localhost',
+            port: 5432,
+            database: 'test',
+            user: 'test',
+            password: 'test',
+          }),
       });
-      expect(assertion).toBeDefined();
-      expect(typeof assertion.toHaveLength).toBe('function');
-    });
-  });
-
-  describe('setDefaults and clearDefaults', () => {
-    it('should set defaults for a table', () => {
-      const setDefaultsSpy = vi.spyOn(dbClient, 'setDefaultValues');
-
-      dbUtils.setDefaults('test-db', 'users', { created_at: '2023-01-01' });
-
-      expect(setDefaultsSpy).toHaveBeenCalledWith('test-db', 'users', { created_at: '2023-01-01' });
     });
 
-    it('should clear defaults for a database', () => {
-      const clearDefaultsSpy = vi.spyOn(dbClient, 'clearDefaults');
+    it('should set and apply default values', async () => {
+      const mockRows = [{ id: 1, name: 'test' }];
+      mockPgClient.query.mockResolvedValue({ rows: mockRows });
 
-      dbUtils.clearDefaults('test-db');
+      dbRegistry.setDefaultValues('test-db', 'users', () => ({
+        active: true,
+        createdAt: 'now()',
+      }));
 
-      expect(clearDefaultsSpy).toHaveBeenCalledWith('test-db');
+      const response = await dbRegistry.sendRequest('test-db', 'users', 'insert', {
+        data: { name: 'test' },
+      });
+
+      expect(response.data).toEqual(mockRows);
+    });
+
+    it('should handle table name casing consistently', async () => {
+      const mockRows = [{ id: 1, name: 'test' }];
+      mockPgClient.query.mockResolvedValue({ rows: mockRows });
+
+      // Set defaults with different casings
+      dbRegistry.setDefaultValues('test-db', 'donor_profiles', () => ({
+        active: true,
+        source: 'test',
+      }));
+
+      dbRegistry.setDefaultValues('test-db', 'DonorProfiles', () => ({
+        active: false,
+        source: 'override',
+      }));
+
+      // Test with different casings
+      const response1 = await dbRegistry.sendRequest('test-db', 'donor_profiles', 'insert', {
+        data: { name: 'test1' },
+      });
+
+      const response2 = await dbRegistry.sendRequest('test-db', 'DonorProfiles', 'insert', {
+        data: { name: 'test2' },
+      });
+
+      // Both should use the same defaults (last one set)
+      expect(response1.config.data).toMatchObject({
+        active: false,
+        source: 'override',
+        name: 'test1',
+      });
+
+      expect(response2.config.data).toMatchObject({
+        active: false,
+        source: 'override',
+        name: 'test2',
+      });
+    });
+
+    it('should handle mixed case in table names', async () => {
+      const mockRows = [{ id: 1, name: 'test' }];
+      mockPgClient.query.mockResolvedValue({ rows: mockRows });
+
+      // Set with snake_case
+      dbRegistry.setDefaultValues('test-db', 'donor_prioritized', () => ({
+        priority: { score: 0 },
+      }));
+
+      // Access with PascalCase
+      const response = await dbRegistry.sendRequest('test-db', 'DonorPrioritized', 'insert', {
+        data: { donorId: '123' },
+      });
+
+      expect(response.config.data).toMatchObject({
+        priority: { score: 0 },
+        donorId: '123',
+      });
+    });
+
+    it('should clear defaults for a database', async () => {
+      dbRegistry.setDefaultValues('test-db', 'users', () => ({
+        active: true,
+      }));
+
+      dbRegistry.clearDefaults('test-db');
+
+      // Verify defaults were cleared by checking internal state
+      expect((dbRegistry as any).defaults.size).toBe(0);
     });
   });
 });

@@ -22,7 +22,12 @@ interface DbContextResponse {
   responseObject?: any;
 }
 
-export type DbContext = DbResponse & Record<string, DBResponseHistory>;
+/**
+ * The DbContext is a union of the DbResponse and the DBResponseHistory
+ * The DbResponse is the response from the last database operation containing the data, rowCount and config (request confing)
+ * The remaining keys contain DBResponseHistory objects, historical `reads` and `writes` keyed by the table name in PascalCase
+ */
+export type DbContext = DbContextResponse & Record<string, DBResponseHistory>;
 
 export interface DBClient<T = any> {
   insert: (table: string, data: Record<string, any>) => Promise<any[]>;

@@ -1,9 +1,13 @@
 import type { StepUtils } from './types/step-utils.types';
-import { useCtx } from './utils/context';
+import { setContext, useCtx } from './utils/context';
 
 type PartiallyPartial<T> = Partial<{ [K in keyof T]: Partial<T[K]> }>;
 
-let registeredUtils: StepUtils = { given: {}, when: {}, then: {} } as any;
+let registeredUtils: StepUtils = {
+  given: { setContext: setContext },
+  when: {},
+  then: {},
+} as any;
 
 export function registerStepUtils({ given, when, then }: PartiallyPartial<StepUtils>) {
   Object.assign(registeredUtils.given, given);
@@ -23,17 +27,22 @@ function addStep<T extends keyof StepUtils>(fn: StepFn<StepUtils[T]>, stepType: 
   });
 }
 
-export function Given(fn: StepFn<StepUtils['given']>) {
-  addStep(fn, 'given');
+function createStepFunction<T extends keyof StepUtils>(stepType: T) {
+  function step(description: string, fn: StepFn<StepUtils[T]>): void;
+  function step(fn: StepFn<StepUtils[T]>): void;
+  function step(descriptionOrFn: string | StepFn<StepUtils[T]>, fn?: StepFn<StepUtils[T]>) {
+    if (typeof descriptionOrFn === 'string') {
+      addStep(fn!, stepType);
+    } else {
+      addStep(descriptionOrFn, stepType);
+    }
+  }
+  return step;
 }
 
-export function When(fn: StepFn<StepUtils['when']>) {
-  addStep(fn, 'when');
-}
-
-export function Then(fn: StepFn<StepUtils['then']>) {
-  addStep(fn, 'then');
-}
+export const Given = createStepFunction('given');
+export const When = createStepFunction('when');
+export const Then = createStepFunction('then');
 
 export function getStepQueue() {
   const steps = [...stepQueue];

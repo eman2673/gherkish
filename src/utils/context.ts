@@ -13,11 +13,16 @@ export function blacklistKey(key: string) {
   blacklistKeys.push(key);
 }
 
-export function setContext(key: string, value: any) {
+export function setContext(
+  key: string,
+  value: any,
+  logFormatter = (value: any) => JSON.stringify(value, null, 2),
+) {
   const ctx = useCtx();
   if (blacklistKeys.includes(key)) {
     console.warn(`Cannot set ${key} in context. Must be used internally.`);
     return;
   }
+  console.log(`Setting context: ${key} = ${logFormatter(value)}`);
   ctx[key] = value;
 }

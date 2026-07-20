@@ -49,7 +49,7 @@ export abstract class SqlClient implements DBClient {
    */
   async select(table: string, where?: Record<string, any>): Promise<any[]> {
     const md = splitForWhere(where);
-    const statement = `select * from ${table} ${md.where}`;
+    const statement = `select * from ${snakeCase(table)} ${md.where}`;
     const result = await this.exec(statement, md.params);
     return this.transformResult(result);
   }
@@ -70,11 +70,11 @@ export abstract class SqlClient implements DBClient {
   async update(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>
+    where: Record<string, any>,
   ): Promise<any[]> {
     const set = splitRecord(data);
     const md = splitForWhere(where, set.size);
-    const statement = `update ${table} set ${set.keys.map((k, i) => `${k} = ${set.binds[i]}`).join(', ')} ${md.where} returning *`;
+    const statement = `update ${snakeCase(table)} set ${set.keys.map((k, i) => `${k} = ${set.binds[i]}`).join(', ')} ${md.where} returning *`;
     const result = await this.exec(statement, set.params.concat(md.params));
     return this.transformResult(result);
   }
@@ -84,7 +84,7 @@ export abstract class SqlClient implements DBClient {
    */
   async delete(table: string, where: Record<string, any>): Promise<any[]> {
     const md = splitForWhere(where);
-    const statement = `delete from ${table} ${md.where} returning *`;
+    const statement = `delete from ${snakeCase(table)} ${md.where} returning *`;
     const result = await this.exec(statement, md.params);
     return this.transformResult(result);
   }
@@ -93,8 +93,8 @@ export abstract class SqlClient implements DBClient {
    * Transform database results to camelCase keys
    */
   protected transformResult(result: any[]): any[] {
-    return result.map(r =>
-      Object.fromEntries(Object.entries(r).map(([k, v]) => [camelCase(k), v]))
+    return result.map((r) =>
+      Object.fromEntries(Object.entries(r).map(([k, v]) => [camelCase(k), v])),
     );
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "gherkish",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "type": "module",
   "main": "src/index.ts",
@@ -11,12 +11,17 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.840.0",
     "@aws-sdk/lib-dynamodb": "^3.840.0",
+    "@faker-js/faker": "^8.4.1",
     "change-case": "^5.4.4"
   },
   "peerDependencies": {
-    "pg": "^8.15.6"
+    "pg": "^8.15.6",
+    "vitest": "^2.0.0 || ^3.0.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.15.1"
+    "@types/node": "^22.15.17",
+    "@types/pg": "^8.15.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

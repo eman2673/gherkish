@@ -1,9 +1,14 @@
-import { useCtx } from '../context';
-import { expect, Assertion } from 'vitest';
 import { pascalCase } from 'change-case';
-import { DbRequestConfig, DbResponse, DBClient } from './db.types';
+import { Assertion, expect } from 'vitest';
+
+import { registerEachUtils, registerFeatureUtils } from '../../feature';
 import { registerStepUtils } from '../../step-types';
 import type { DBNameSpace } from '../../types/global';
+import { useCtx } from '../context';
+import { DBClient, DbRequestConfig, DbResponse } from './db.types';
+
+type DefaultBuilder = (context: Context) => Record<string, any>;
+type DBDefaults = Record<string, DefaultBuilder>;
 
 export interface DBRegistration<T = any> {
   name: string;
@@ -12,6 +17,14 @@ export interface DBRegistration<T = any> {
    * @returns The database client
    */
   connect: () => Promise<T>;
+  /**
+   * Runs once, immediately after the connection is first established and before
+   * any step uses it — the client is connected lazily and cached, so this fires
+   * exactly once per worker. Use it for one-time setup (seeding reference rows,
+   * priming sequences). Because it still runs once *per worker*, keep the work
+   * idempotent and safe to run concurrently across workers.
+   */
+  onConnect?: (client: T) => Promise<void> | void;
   before?: (config: DbRequestConfig) => DbRequestConfig;
   after?: (response: DbResponse) => DbResponse;
 }
@@ -20,7 +33,7 @@ export type SendDbRequestHandler = (
   dbName: string,
   table: string,
   operation: 'select' | 'insert' | 'update' | 'delete',
-  requestInit?: Partial<Omit<DbRequestConfig, 'table' | 'operation'>>
+  requestInit?: Partial<Omit<DbRequestConfig, 'table' | 'operation'>>,
 ) => Promise<DbResponse>;
 
 export type SendDbRequestUtil = SendDbRequestHandler & {
@@ -35,7 +48,7 @@ export interface DbGivenUtils extends SendDbRequestUtil {
     dbName: string,
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>
+    where: Record<string, any>,
   ) => Promise<any[]>;
   delete: (dbName: string, table: string, where: Record<string, any>) => Promise<any[]>;
 }
@@ -43,22 +56,30 @@ export interface DbGivenUtils extends SendDbRequestUtil {
 export type DbWhenUtils = SendDbRequestUtil;
 
 export interface DbThenUtils extends SendDbRequestUtil {
-  expect: (dbName: string, table: string, where: Record<string, any>) => Promise<Assertion<any>>;
+  /**
+   * Looks up a record in the database and returns an assertion resulting from expect(executedQuery).resolves
+   * Stores the query results in the global context as db.[table].reads to allow multiple assertions
+   * on the same results.
+   * @example
+   * await DB.expect('default', 'donor_profiles', { clientId }).resolves.toEqual(...)
+   * expect(db.DonorProfiles?.reads[0]).toEqual(...)
+   */
+  expect: (
+    dbName: string,
+    table: string,
+    where: Record<string, any>,
+  ) => Assertion<() => Promise<any[]>>['resolves'];
 }
 
 export interface DbFeatureUtils {
-  setDefaults: (
-    dbName: string,
-    table: string,
-    defaults: (context: Context) => Record<string, any>
-  ) => void;
+  setDefaults: (dbName: string, table: string, defaults: DefaultBuilder) => void;
   clearDefaults: (dbName: string) => void;
 }
 
 export class DbClientRegistry {
   private dbRegistry = new Map<string, DBRegistration>();
   private clients = new Map<string, DBClient>();
-  private defaults = new Map<string, (context: Context) => Record<string, any>>();
+  private defaults = new Map<string, DBDefaults>();
 
   /**
    * Register a database configuration
@@ -88,6 +109,9 @@ export class DbClientRegistry {
     }
 
     const client = await db.connect();
+    // Run one-time setup before caching so a failed hook doesn't leave a
+    // half-initialized client registered for the rest of the run.
+    await db.onConnect?.(client);
     this.clients.set(dbName, client);
     return client;
   }
@@ -98,10 +122,11 @@ export class DbClientRegistry {
   setDefaultValues(
     dbName: string,
     table: string,
-    defaultValues: (context: Context) => Record<string, any>
+    defaultValues: (context: Context) => Record<string, any>,
   ): void {
-    const key = `${dbName}:${table}`;
-    this.defaults.set(key, defaultValues);
+    const defaults = this.defaults.get(dbName) ?? {};
+    defaults[pascalCase(table)] = defaultValues;
+    this.defaults.set(dbName, defaults);
   }
 
   /**
@@ -117,11 +142,11 @@ export class DbClientRegistry {
   private applyDefaults(
     dbName: string,
     table: string,
-    record: Record<string, any>
+    record: Record<string, any>,
   ): Record<string, any> {
-    const key = `${dbName}:${table}`;
-    const defaultsSupplier = this.defaults.get(key) ?? (() => ({}));
-    return { ...defaultsSupplier(useCtx()), ...record };
+    const defaults = this.defaults.get(dbName) ?? {};
+    const defaultValues = defaults[pascalCase(table)];
+    return defaultValues ? { ...defaultValues(useCtx()), ...record } : record;
   }
 
   /**
@@ -139,7 +164,7 @@ export class DbClientRegistry {
     dbName: string,
     table: string,
     operation: 'select' | 'insert' | 'update' | 'delete',
-    requestInit: Partial<Omit<DbRequestConfig, 'table' | 'operation'>> = {}
+    requestInit: Partial<Omit<DbRequestConfig, 'table' | 'operation'>> = {},
   ): Promise<DbResponse<T>> {
     const db = this.dbRegistry.get(dbName);
     if (!db) {
@@ -166,6 +191,15 @@ export class DbClientRegistry {
     let rowCount = 0;
 
     const client = await this.getClient(dbName);
+    if (operation === 'insert') {
+      config.data = this.applyDefaults(dbName, table, data!);
+    }
+
+    console.log(
+      'DB request: ',
+      dbName,
+      JSON.stringify({ table, operation, config: { ...requestInit, data: config.data } }, null, 2),
+    );
 
     switch (operation) {
       case 'select':
@@ -173,8 +207,7 @@ export class DbClientRegistry {
         rowCount = result.length;
         break;
       case 'insert':
-        const appliedData = this.applyDefaults(dbName, table, data!);
-        result = await client.insert(table, appliedData);
+        result = await client.insert(table, config.data!);
         rowCount = result.length;
         break;
       case 'update':
@@ -188,6 +221,8 @@ export class DbClientRegistry {
       default:
         throw new Error(`Unsupported operation: ${operation}`);
     }
+
+    console.log('DB response: ', dbName, JSON.stringify({ result, rowCount }, null, 2));
 
     const response: DbResponse<T> = {
       data: result as T[],
@@ -204,7 +239,7 @@ export class DbClientRegistry {
     this.updateGlobalContext(
       config,
       finalResponse,
-      response.data.length > 1 ? response.data : response.data[0]
+      response.data.length > 1 ? response.data : response.data[0],
     );
 
     return finalResponse;
@@ -221,15 +256,17 @@ export class DbClientRegistry {
       Object.assign(db, {
         request,
         response,
-        responseObject: response?.data,
+        responseObject: data,
       });
 
-      const { table, operation } = request;
-      const tableKey = pascalCase(table);
-      db[tableKey] = db[tableKey] ?? {};
-      db[tableKey].reads = db[tableKey].reads ?? [];
-      db[tableKey].writes = db[tableKey].writes ?? [];
-      db[tableKey][operation === 'select' ? 'reads' : 'writes'].push(data);
+      if (data) {
+        const { table, operation } = request;
+        const tableKey = pascalCase(table);
+        db[tableKey] = db[tableKey] ?? {};
+        db[tableKey].reads = db[tableKey].reads ?? [];
+        db[tableKey].writes = db[tableKey].writes ?? [];
+        db[tableKey][operation === 'select' ? 'reads' : 'writes'].push(data);
+      }
     } catch {}
   }
 
@@ -237,20 +274,20 @@ export class DbClientRegistry {
    * Close all database connections
    */
   async close(): Promise<void> {
-    await Promise.all(Array.from(this.clients.values()).map(client => client.close()));
+    await Promise.all(Array.from(this.clients.values()).map((client) => client.close()));
     this.clients.clear();
   }
 }
 
 // Database utilities factory
 function createDbUtils(
-  dbClient: DbClientRegistry
+  dbClient: DbClientRegistry,
 ): DbGivenUtils & DbWhenUtils & DbThenUtils & DbFeatureUtils {
   const sendDbRequest = (
     dbName: string,
     table: string,
     operation: 'select' | 'insert' | 'update' | 'delete',
-    requestInit?: Partial<Omit<DbRequestConfig, 'table' | 'operation'>>
+    requestInit?: Partial<Omit<DbRequestConfig, 'table' | 'operation'>>,
   ) => dbClient.sendRequest(dbName, table, operation, requestInit);
 
   return Object.assign(sendDbRequest, {
@@ -260,7 +297,7 @@ function createDbUtils(
     // Given utilities
     insert: async (dbName: string, table: string, ...records: Record<string, any>[]) => {
       const results = await Promise.all(
-        records.map(record => dbClient.sendRequest(dbName, table, 'insert', { data: record }))
+        records.map((record) => dbClient.sendRequest(dbName, table, 'insert', { data: record })),
       );
       return results.flatMap((response: any) => response.data);
     },
@@ -268,7 +305,7 @@ function createDbUtils(
       dbName: string,
       table: string,
       data: Record<string, any>,
-      where: Record<string, any>
+      where: Record<string, any>,
     ) => {
       const response = await dbClient.sendRequest(dbName, table, 'update', { data, where });
       return response.data;
@@ -279,16 +316,16 @@ function createDbUtils(
     },
 
     // Then utilities
-    expect: async (dbName: string, table: string, where: Record<string, any>) => {
-      const records = await dbClient.sendRequest(dbName, table, 'select', { where });
-      return expect(records.data);
+    expect: (dbName: string, table: string, where: Record<string, any>) => {
+      const records = dbClient.sendRequest(dbName, table, 'select', { where });
+      return expect(records.then((res) => res.data)).resolves;
     },
 
     // Feature-level utilities
     setDefaults: (
       dbName: string,
       table: string,
-      defaults: (context: Context) => Record<string, any>
+      defaults: (context: Context) => Record<string, any>,
     ) => {
       dbClient.setDefaultValues(dbName, table, defaults);
     },
@@ -298,8 +335,14 @@ function createDbUtils(
   });
 }
 
+let isRegistered = false;
 export default (context: DBNameSpace) => {
+  if (isRegistered) return;
+  isRegistered = true;
+
   const util = createDbUtils(new DbClientRegistry());
   registerStepUtils({ given: { DB: util }, then: { DB: util } });
+  registerEachUtils({ DB: util });
+  registerFeatureUtils({ DB: util });
   context.add = util.client.add.bind(util.client);
 };

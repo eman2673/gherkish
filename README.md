@@ -21,7 +21,7 @@ Gherkish provides a clean, Gherkin-inspired API for writing BDD tests:
 Feature('User Management', ({ beforeEach, afterEach, DB }) => {
   beforeEach(async () => {
     // Setup test data
-    await DB.setDefaults('default', 'users', ctx => ({
+    await DB.setDefaults('default', 'users', (ctx) => ({
       createdAt: new Date(),
       status: 'active',
     }));
@@ -126,11 +126,11 @@ Feature('Health Check', ({ beforeEach, afterEach }) => {
   });
 
   Scenario('Application health is ok', () => {
-    When(async (ctx, { HTTP }) => {
+    When('the health endpoint is checked', async (ctx, { HTTP }) => {
       await HTTP.get('api', '/health');
     });
 
-    Then((ctx, { expect }) => {
+    Then('the response should indicate the application is healthy', (ctx, { expect }) => {
       expect(ctx.http.response).to.have.property('status', 200);
       expect(ctx.http.responseObject).to.deep.include({
         status: 'ok',
@@ -155,11 +155,11 @@ The HTTP client provides a flexible way to make HTTP requests with support for m
 HTTP.add('api', {
   baseUrl: 'http://localhost:3000',
   defaultHeaders: { Authorization: 'Bearer token' },
-  before: config => {
+  before: (config) => {
     // Modify request before sending
     return config;
   },
-  after: response => {
+  after: (response) => {
     // Process response
     return response;
   },
@@ -172,33 +172,32 @@ await HTTP.put('api', '/users/1', { data: { name: 'Jane' } });
 await HTTP.delete('api', '/users/1');
 ```
 
-### Database Client
+### WireMock Client
 
-The database client supports both SQL and NoSQL databases through a unified interface.
+The WireMock client provides a fluent API for mocking HTTP services in your tests. For detailed documentation, see the [WireMock Client Documentation](src/utils/wiremock/README.md).
 
 ```typescript
-// Configure database
-DB.add('default', {
-  connect: async () => {
-    return new DB.PgClient({
-      host: 'localhost',
-      port: 5432,
-      database: 'testdb',
-      user: 'postgres',
-      password: 'password',
-    });
-  },
+// Configure WireMock
+WireMock.setBaseUrl('http://localhost:8080');
+WireMock.add('external', { rootPath: '/external' });
+
+// Create stubs
+await Mock.stub.json.get('external', '/api/test', {
+  message: 'Hello World',
 });
 
-// Database operations
-await DB.insert('default', 'users', { name: 'John', email: 'john@example.com' });
-await DB.select('default', 'users', { email: 'john@example.com' });
-await DB.update('default', 'users', { status: 'active' }, { id: 1 });
-await DB.delete('default', 'users', { id: 1 });
-
-// Raw SQL execution
-await DB.exec('default', 'SELECT * FROM users WHERE status = $1', ['active']);
+// Verify requests
+const verification = await Mock.verify('external', 'GET', '/api/test');
+expect(verification.count).toBe(1);
 ```
+
+### Database Client
+
+The database client supports both SQL and NoSQL databases through a unified interface. For detailed documentation, see the [Database Client Documentation](src/utils/db/README.md).
+
+### Fakish - Test Data Generation
+
+Fakish is a powerful test data generation utility built on top of @faker-js/faker. For detailed documentation, see the [Fakish Documentation](src/utils/fakish/README.md).
 
 ### Assertions
 
@@ -426,7 +425,7 @@ function useUtils(...utils: string[]): Promise<void>;
 ### Complete Test Example
 
 ```typescript
-import { useUtils, DB, HTTP } from '@ss/gherkish';
+import { useUtils, DB, HTTP } from 'gherkish';
 
 // Setup
 await useUtils('http.client', 'db/pg.client', 'expect');
@@ -452,8 +451,7 @@ DB.add('default', {
 // Write tests
 Feature('User Management', ({ beforeEach, afterEach, DB }) => {
   beforeEach(async () => {
-    // Set default values for user creation
-    await DB.setDefaults('default', 'users', ctx => ({
+    await DB.setDefaults('default', 'users', (ctx) => ({
       createdAt: new Date(),
       status: 'active',
       verified: false,
@@ -461,18 +459,15 @@ Feature('User Management', ({ beforeEach, afterEach, DB }) => {
   });
 
   afterEach(async () => {
-    // Clean up test data
     await DB.delete('default', 'users', {});
   });
 
   Scenario('Creating a new user', ({ setContext }) => {
-    Given(async (ctx, { DB }) => {
-      // Setup: Ensure no existing user
+    Given('no user exists with the new email', async (ctx, { DB }) => {
       await DB.delete('default', 'users', { email: 'new@example.com' });
     });
 
-    When(async (ctx, { HTTP }) => {
-      // Action: Create user via API
+    When('a new user is created via the API', async (ctx, { HTTP }) => {
       await HTTP.post('api', '/users', {
         data: {
           email: 'new@example.com',
@@ -482,25 +477,24 @@ Feature('User Management', ({ beforeEach, afterEach, DB }) => {
       });
     });
 
-    Then(async (ctx, { expect, DB }) => {
-      // Assertions: Verify response and database state
+    Then('the user should be present in the database', async (ctx, { expect, DB }) => {
       expect(ctx.http.response).to.have.property('status', 201);
       expect(ctx.http.responseObject).to.have.property('id');
       expect(ctx.http.responseObject).to.have.property('email', 'new@example.com');
 
-      // Verify user was created in database
-      const users = await DB.select('default', 'users', {
-        email: 'new@example.com',
+      // Query and check length
+      await DB.expect('default', 'users', { email: 'new@example.com' }).toHaveLength(1);
+
+      // For single result queries, db.responseObject contains the object directly
+      expect(db.responseObject).toMatchObject({
+        status: 'active',
+        verified: false,
       });
-      expect(users).to.have.length(1);
-      expect(users[0]).to.have.property('status', 'active');
-      expect(users[0]).to.have.property('verified', false);
     });
   });
 
   Scenario('User authentication', () => {
-    Given(async (ctx, { DB }) => {
-      // Setup: Create test user
+    Given('a user exists with valid credentials', async (ctx, { DB }) => {
       await DB.insert('default', 'users', {
         email: 'auth@example.com',
         name: 'Auth User',
@@ -509,8 +503,7 @@ Feature('User Management', ({ beforeEach, afterEach, DB }) => {
       });
     });
 
-    When(async (ctx, { HTTP }) => {
-      // Action: Attempt login
+    When('the user attempts to log in', async (ctx, { HTTP }) => {
       await HTTP.post('api', '/auth/login', {
         data: {
           email: 'auth@example.com',
@@ -519,8 +512,7 @@ Feature('User Management', ({ beforeEach, afterEach, DB }) => {
       });
     });
 
-    Then((ctx, { expect }) => {
-      // Assertions: Verify authentication response
+    Then('the response should include a valid token', (ctx, { expect }) => {
       expect(ctx.http.response).to.have.property('status', 200);
       expect(ctx.http.responseObject).to.have.property('token');
       expect(ctx.http.responseObject.user).to.have.property('email', 'auth@example.com');

@@ -1,16 +1,36 @@
 import { describe, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import type { DbFeatureUtils } from './utils/db/db.client';
 import { context } from './utils/context';
-import type { Context } from './types/step-utils.types';
+import type { Context, EachUtils } from './types/step-utils.types';
+import { Given } from './step-types';
 
-// Wrapper function that maintains the same API as original hooks
-function wrapHook<T extends (...args: any[]) => void>(originalHook: T) {
-  return (...args: Parameters<T>) => {
-    const [fn, ...otherArgs]: Parameters<T> = args;
+const eachUtils: EachUtils = {
+  Given,
+} as any;
+const featureUtils: FeatureUtils = {} as any;
 
-    const wrappedFn = function (testCtx: any, ...hookArgs: any[]) {
-      return context.run(testCtx, async () => {
-        return fn(context.getStore(), ...hookArgs);
+export function registerEachUtils(util: Partial<EachUtils>) {
+  Object.assign(eachUtils, util);
+}
+
+type Tail<T extends any[]> = T extends [any, ...infer U] ? U : never;
+type PlusUtils<T extends (...args: any[]) => void> = (
+  ...args: [Parameters<T>[0], EachUtils, ...Tail<Parameters<T>>]
+) => void;
+
+// Wrapper function, maintains same API as original with utils as final added argument
+function wrapHook<T extends (cb: (ctx: any, ...args: any[]) => void, ...args: any[]) => void>(
+  originalHook: T,
+) {
+  type PT_0 = Parameters<T>[0];
+  return (...args: [PlusUtils<PT_0>, ...Tail<Parameters<T>>]) => {
+    const [fn, ...otherArgs] = args;
+
+    const wrappedFn: (...args: any[]) => Promise<void> = function (...args: Parameters<PT_0>) {
+      return context.run(args[0], async () => {
+        const ctx = context.getStore() ?? args[0];
+        const rest = [...args] as Tail<Parameters<PT_0>>;
+        return fn(ctx, eachUtils, ...rest);
       });
     };
 
@@ -31,19 +51,26 @@ export type FeatureUtils = {
   DB: DbFeatureUtils;
 };
 
+let _dbUtils: DbFeatureUtils;
 const params: FeatureUtils = {
   beforeEach: contextualBeforeEach,
   afterEach: contextualAfterEach,
   beforeAll,
   afterAll,
   get DB() {
-    const that = globalThis as any;
-    if (!that.__dbUtils) {
+    if (!_dbUtils) {
       throw new Error('Database utilities not initialized. Make sure setup.ts has run.');
     }
-    return that.__dbUtils;
+    return _dbUtils;
+  },
+  set DB(utils) {
+    _dbUtils = utils;
   },
 };
+
+export function registerFeatureUtils(util: Partial<FeatureUtils>) {
+  Object.assign(params, util);
+}
 
 // Create the feature function
 function feature(name: string, fn: (params: FeatureUtils) => void) {
