@@ -1,8 +1,8 @@
-import { describe, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
-import type { DbFeatureUtils } from './utils/db/db.client';
-import { context } from './utils/context';
-import type { Context, EachUtils } from './types/step-utils.types';
-import { Given } from './step-types';
+import { describe, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import type { DbFeatureUtils } from "./utils/db/db.client";
+import { context } from "./utils/context";
+import type { Context, EachUtils } from "./types/step-utils.types";
+import { Given } from "./step-types";
 
 const eachUtils: EachUtils = {
   Given,
@@ -14,19 +14,28 @@ export function registerEachUtils(util: Partial<EachUtils>) {
 }
 
 type Tail<T extends any[]> = T extends [any, ...infer U] ? U : never;
-type PlusUtils<T extends (...args: any[]) => void> = (
+/**
+ * Preserves T's real return type instead of forcing `void`. Vitest's
+ * before/afterEach listeners return `Awaitable<unknown>`, so hardcoding `void`
+ * here made async Given/afterEach callbacks trip
+ * @typescript-eslint/no-misused-promises for consumers, even though they
+ * resolve correctly at runtime.
+ */
+type PlusUtils<T extends (...args: any[]) => any> = (
   ...args: [Parameters<T>[0], EachUtils, ...Tail<Parameters<T>>]
-) => void;
+) => ReturnType<T>;
 
 // Wrapper function, maintains same API as original with utils as final added argument
-function wrapHook<T extends (cb: (ctx: any, ...args: any[]) => void, ...args: any[]) => void>(
-  originalHook: T,
-) {
+function wrapHook<
+  T extends (cb: (ctx: any, ...args: any[]) => any, ...args: any[]) => void,
+>(originalHook: T) {
   type PT_0 = Parameters<T>[0];
   return (...args: [PlusUtils<PT_0>, ...Tail<Parameters<T>>]) => {
     const [fn, ...otherArgs] = args;
 
-    const wrappedFn: (...args: any[]) => Promise<void> = function (...args: Parameters<PT_0>) {
+    const wrappedFn: (...args: any[]) => Promise<void> = function (
+      ...args: Parameters<PT_0>
+    ) {
       return context.run(args[0], async () => {
         const ctx = context.getStore() ?? args[0];
         const rest = [...args] as Tail<Parameters<PT_0>>;
@@ -59,7 +68,9 @@ const params: FeatureUtils = {
   afterAll,
   get DB() {
     if (!_dbUtils) {
-      throw new Error('Database utilities not initialized. Make sure setup.ts has run.');
+      throw new Error(
+        "Database utilities not initialized. Make sure setup.ts has run.",
+      );
     }
     return _dbUtils;
   },
